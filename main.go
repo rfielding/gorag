@@ -46,6 +46,11 @@ func connectToDB(dsn string) (*sql.DB, error) {
 	return db, nil
 }
 
+/*
+  We get the schema explicitly so that chatgpt can study it to
+  plan SQL queries. This lets it not only understand questions
+  in terms of tables and columns, but in terms of joins and types.
+ */
 func getSchema(db *sql.DB) (*DBMetadata, error) {
 	query := `
 		SELECT table_name, column_name
@@ -79,6 +84,10 @@ func formatSchema(metadata *DBMetadata) string {
 	return sb.String()
 }
 
+/*
+  If you want to pass in extra metadata to explain things that must be described outside the schema,
+  then put that here. It's basically just an extra bit of system prompting.
+ */
 func loadExtraMetadata(filename string) (map[string]string, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -95,6 +104,7 @@ func callOpenAIRaw(apiKey, prompt string) ([]byte, error) {
 	url := "https://api.openai.com/v1/chat/completions"
 	requestBody, err := json.Marshal(OpenAIRequest{
 		Model: "gpt-4o",
+		// Just using user prompting for now
 		Messages: []Message{
 			{
 				Role:    "user",
@@ -133,6 +143,12 @@ func callOpenAI(apiKey, prompt string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// we need to be careful, because asking it to only render json
+	// does not work. it currently wants to put a markdown json
+	// fence around the json result, so we parse it to just
+	// assume that the first { starts and last } ends json.
+	// it's kind of nuts that this is not the easiest thing to
+	// make it obey.
 	var openAIResponse OpenAIResponse
 	if err := json.Unmarshal(body, &openAIResponse); err != nil {
 		return "", err
@@ -144,6 +160,7 @@ func callOpenAI(apiKey, prompt string) (string, error) {
 	// Extract and parse JSON from the response content
 	responseContentRaw := openAIResponse.Choices[0].Message.Content
 	var queryResponse struct {
+		// We use the query field to mean the SQL query
 		Query string `json:"query"`
 	}
 	responseContent := findJson(responseContentRaw)
@@ -158,6 +175,7 @@ func callOpenAI(apiKey, prompt string) (string, error) {
 	return findJson(queryResponse.Query), nil
 }
 
+// Just assume that the json markdown fence is the only place with curlies
 func findJson(content string) string {
 	if strings.Index(content, "{") > 0 {
 		if strings.LastIndex(content, "}") > 0 {
@@ -167,6 +185,7 @@ func findJson(content string) string {
 	return content
 }
 
+// connect to a postgres database
 var user = flag.String("user", "llama", "user name")
 var password = flag.String("password", "llama", "password")
 var dbname = flag.String("dbname", "memory_agent", "database name")
